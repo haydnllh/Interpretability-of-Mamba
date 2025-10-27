@@ -1,3 +1,30 @@
+# Installation instruction for Iridis
+Create and actiavte a conda environment:
+```bash
+conda create -n mamba python=3.10
+conda activate mamba
+```
+
+Load in modules cuda 12.8 and gcc 11.5:
+```bash
+module load cuda/12.8
+module load gcc/11.5.0
+```
+> Note: This is done on Iridis X so the modules might vary.
+
+Install the packages directly from the repository with:
+```bash
+pip install .
+pip install causal-conv1d>=1.4.0
+```
+> Note: This process may take a long time because it compiles CUDA/C++ extensions.
+
+Run pytest:
+```bash
+pip install pytest
+pytest -v
+```
+
 # Mamba
 
 ![Mamba](assets/selection.png "Selective State Space")
