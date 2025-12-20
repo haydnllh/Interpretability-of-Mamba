@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from einops import rearrange, repeat
+from einops import rearrange, repeat, einsum
 
 from mamba_ssm.ops.selective_scan_interface import selective_scan_fn, mamba_inner_fn
 
@@ -47,6 +47,7 @@ class Mamba(nn.Module):
         layer_idx=None,
         device=None,
         dtype=None,
+        isComplex=False
     ):
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
@@ -58,6 +59,7 @@ class Mamba(nn.Module):
         self.dt_rank = math.ceil(self.d_model / 16) if dt_rank == "auto" else dt_rank
         self.use_fast_path = use_fast_path
         self.layer_idx = layer_idx
+        self.isComplex = isComplex
 
         self.in_proj = nn.Linear(self.d_model, self.d_inner * 2, bias=bias, **factory_kwargs)
 
@@ -100,15 +102,26 @@ class Mamba(nn.Module):
         # Our initialization would set all Linear.bias to zero, need to mark this one as _no_reinit
         self.dt_proj.bias._no_reinit = True
 
-        # S4D real initialization
-        A = repeat(
-            torch.arange(1, self.d_state + 1, dtype=torch.float32, device=device),
-            "n -> d n",
-            d=self.d_inner,
-        ).contiguous()
-        A_log = torch.log(A)  # Keep A_log in fp32
-        self.A_log = nn.Parameter(A_log)
-        self.A_log._no_weight_decay = True
+        if not self.isComplex:
+            # S4D real initialization
+            A = repeat(
+                torch.arange(1, self.d_state + 1, dtype=torch.float32, device=device),
+                "n -> d n",
+                d=self.d_inner,
+            ).contiguous()
+            A_log = torch.log(A)  # Keep A_log in fp32
+            self.A_log = nn.Parameter(A_log)
+            self.A_log._no_weight_decay = True
+        else:
+            # S4D complex initialization
+            log_A_real = torch.log(0.5 * torch.ones(self.d_inner, self.d_state))
+            A_imag = math.pi * repeat(torch.arange(self.d_state), 'n -> h n', h=self.d_inner)
+            
+            self.log_A_real = nn.Parameter(log_A_real)
+            self.log_A_real._no_weight_decay = True 
+            
+            self.A_imag = nn.Parameter(A_imag)
+            self.A_imag._no_weight_decay = True 
 
         # D "skip" parameter
         self.D = nn.Parameter(torch.ones(self.d_inner, device=device))  # Keep in fp32
@@ -140,7 +153,11 @@ class Mamba(nn.Module):
         if self.in_proj.bias is not None:
             xz = xz + rearrange(self.in_proj.bias.to(dtype=xz.dtype), "d -> d 1")
 
-        A = -torch.exp(self.A_log.float())  # (d_inner, d_state)
+        if not self.isComplex:
+            A = -torch.exp(self.A_log.float())  # (d_inner, d_state)
+        else:
+            A = -torch.exp(self.log_A_real) + 1j * self.A_imag
+            
         # In the backward pass we write dx and dz next to each other to avoid torch.cat
         if self.use_fast_path and causal_conv1d_fn is not None and inference_params is None:  # Doesn't support outputting the states
             out = mamba_inner_fn(
@@ -232,7 +249,11 @@ class Mamba(nn.Module):
         dt, B, C = torch.split(x_db, [self.dt_rank, self.d_state, self.d_state], dim=-1)
         # Don't add dt_bias here
         dt = F.linear(dt, self.dt_proj.weight)  # (B d_inner)
-        A = -torch.exp(self.A_log.float())  # (d_inner, d_state)
+        
+        if not self.isComplex:
+            A = -torch.exp(self.A_log.float())  # (d_inner, d_state)
+        else:
+            A = -torch.exp(self.log_A_real) + 1j * self.A_imag
 
         # SSM step
         if selective_state_update is None:
@@ -292,3 +313,68 @@ class Mamba(nn.Module):
                 conv_state.zero_()
                 ssm_state.zero_()
         return conv_state, ssm_state
+
+    def get_parameters(self, hidden_states):
+        batch, seqlen, dim = hidden_states.shape
+
+        # We do matmul and transpose BLH -> HBL at the same time
+        xz = rearrange(
+            self.in_proj.weight @ rearrange(hidden_states, "b l d -> d (b l)"),
+            "d (b l) -> b d l",
+            l=seqlen,
+        )
+        if self.in_proj.bias is not None:
+            xz = xz + rearrange(self.in_proj.bias.to(dtype=xz.dtype), "d -> d 1")
+
+        if not self.isComplex:
+            A = -torch.exp(self.A_log.float())  # (d_inner, d_state)
+        else:
+            A = -torch.exp(self.log_A_real) + 1j * self.A_imag
+        
+        x, z = xz.chunk(2, dim=1)
+        if causal_conv1d_fn is None:
+            x = self.act(self.conv1d(x)[..., :seqlen])
+        else:
+            assert self.activation in ["silu", "swish"]
+            x = causal_conv1d_fn(
+                x=x,
+                weight=rearrange(self.conv1d.weight, "d 1 w -> d w"),
+                bias=self.conv1d.bias,
+                activation=self.activation,
+            )
+
+        
+        x_dbl = self.x_proj(rearrange(x, "b d l -> (b l) d"))  # (bl d)
+        dt, B, C = torch.split(x_dbl, [self.dt_rank, self.d_state, self.d_state], dim=-1)
+        dt = F.linear(dt, self.dt_proj.weight)  # (B d_inner)
+        dt = F.softplus(dt + self.dt_proj.bias.to(dtype=dt.dtype))
+        dA = torch.exp(torch.einsum("bd,dn->bdn", dt, A))
+        dB = torch.einsum("bd,bn->bdn", dt, B)
+        
+        dt = rearrange(dt, "(b l) d -> b l d", l=seqlen)
+        B = rearrange(B, "(b l) dstate -> b l dstate", l=seqlen)
+        C = rearrange(C, "(b l) dstate -> b l dstate", l=seqlen)
+        dA = rearrange(dA, "(b l) d dstate -> b l d dstate", l=seqlen)
+        dB = rearrange(dB, "(b l) d dstate -> b l d dstate", l=seqlen)
+        
+        states, y = self.selective_scan(dA, dB, C, self.D, rearrange(x, "b d l -> b l d"))
+        
+        return A.to("cpu"), B.to("cpu"), C.to("cpu"), self.D.to("cpu"), dt.to("cpu"), dA.to("cpu"), dB.to("cpu"), states.to("cpu"), y.to("cpu")
+    
+    def selective_scan(self, dA, dB, C, D, u):
+        b,l,d,n = dA.shape
+        x = torch.zeros((b,d,n), device=dA.device)
+        xs = []
+        ys = []
+        dB_u = einsum(dB, u, "b l d_in n, b l d_in -> b l d_in n")
+        
+        for i in range(int(l)):
+            x = dA[:, i] * x + dB_u[:, i]
+            y = einsum(x, C[:, i, :], 'b d_in n, b n -> b d_in')
+            xs.append(x)
+            ys.append(y)
+        x = torch.stack(xs, dim=1)
+        y = torch.stack(ys, dim=1)
+        
+        y = y + u * D
+        return x,y
