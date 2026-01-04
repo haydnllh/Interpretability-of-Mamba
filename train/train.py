@@ -6,11 +6,13 @@ from lightning.pytorch.loggers import TensorBoardLogger, CSVLogger
 import argparse
 from datetime import datetime
 from omegaconf import OmegaConf
+import os
 from mamba_ssm.modules.mamba import MambaConfig
 from models.mamba_image_classifier import MambaImageClassifier
 from models.mamba_audio_classifier import MambaAudioClassifier
 from models.dataloaders.dataloaders import get_mnist, get_cifar, get_sc
 from models.selective_copying_mamba import train
+from models.train_induction_head import train_induction_head
 
 class MambaClassifierTrainer(L.LightningModule):
     def __init__(self, mamba_config, model_config, data, lr=2e-3, weight_decay=0.1):
@@ -93,13 +95,15 @@ def main():
         train_loader, test_loader = get_sc(batch_size=cfg.train.batch_size)
         
     elif args.dataset == "selective_copying":
-        train(args.checkpoint_path)
+        train(f'{args.checkpoint_path}')
         return
-        
+    else:
+        train_induction_head(out_file=args.checkpoint_path)
+        return
         
     timestamp = datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
     checkpoint_callback = ModelCheckpoint(
-        dirpath=f"checkpoints/{timestamp if args.checkpoint_path is None else args.checkpoint_path}",
+        dirpath=f"/scratch/lhl1g23/checkpoints/{timestamp if args.checkpoint_path is None else args.checkpoint_path}",
         filename="best",
         save_top_k=1,
         save_last=True,
@@ -108,7 +112,7 @@ def main():
     
     version = "version_0"
     logger_tb = TensorBoardLogger(
-        save_dir="lightning_logs",
+        save_dir="/scratch/lhl1g23/lightning_logs/",
         name=args.checkpoint_path,
         version = version
     )

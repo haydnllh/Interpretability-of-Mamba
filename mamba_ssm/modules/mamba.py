@@ -105,6 +105,11 @@ class Mamba(nn.Module):
             x, caches[i] = layer.step(x, caches[i])
 
         return x, caches
+    
+    def get_params(self, x):
+        for block in self.layers:
+            yield block.get_params(x)
+            x = block(x)
 
 
 class ResidualBlock(nn.Module):
@@ -136,6 +141,9 @@ class ResidualBlock(nn.Module):
         output, cache = self.mixer.step(self.norm(x), cache)
         output = output + x
         return output, cache
+    
+    def get_params(self, x):
+        return self.mixer.get_params(x)
 
 
 class MambaBlock(nn.Module):
@@ -608,6 +616,9 @@ class MambaBlock(nn.Module):
     def get_params(self, x, z=None):
         params = {}
         
+        xz = self.in_proj(x)
+        x, z = xz.chunk(2, dim=-1)
+        
         if self.config.ssm_type == "S6-Real":
             # Base parameters
             A = -torch.exp(self.A_log.float())  # (ED, N)
@@ -622,8 +633,7 @@ class MambaBlock(nn.Module):
             if self.config.dt_is_selective:
                 dt_proj = self.dt_proj.weight @ dt_raw.transpose(1, 2)
                 dt = dt_proj.transpose(1, 2)
-                if not self.config.use_cuda:
-                    dt = F.softplus(dt + self.dt_proj.bias)
+                dt = F.softplus(dt + self.dt_proj.bias)
             else:
                 dt_new = torch.exp(self.inv_dt)
                 dt = torch.zeros_like(x[..., :1].expand(-1, -1, A.shape[0])) + dt_new
@@ -761,6 +771,8 @@ class MambaBlock(nn.Module):
         
         else:
             raise NotImplementedError(f"get_params not implemented for ssm_type: {self.config.ssm_type}")
+        
+        params = {k: v.to('cpu') for k, v in params.items()}
         
         return params
 

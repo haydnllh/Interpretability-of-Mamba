@@ -21,11 +21,9 @@ mamba:
 model:
   num_classes: 10
   n_input: 1
-  n_layers: 1
-  pooling_factor: 1
 
 train:
   batch_size: 16
   lr: 0.001
-  epochs: 30
+  epochs: 20
   is_mel: False

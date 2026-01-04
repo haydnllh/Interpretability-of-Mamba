@@ -54,6 +54,7 @@ def get_sc(batch_size=32, n_mels=128, is_mel=False):
         gen=False,
         discrete_input=False,
     )
+    
     train_data, test_data = torch.utils.data.random_split(dataset, [0.8, 0.2])
     """ test_data = _SpeechCommands(
         partition='test',

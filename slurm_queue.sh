@@ -3,8 +3,8 @@
 #SBATCH --mail-type=ALL
 #SBATCH --nodes=1                # Number of nodes - keep nodes to minimum to avoid overheads for data transfer between nodes
 #SBATCH --ntasks-per-node=1      # total number of tasks per node
-#SBATCH --mem=64G                # total memory per node (4 GB per cpu-core is default)
-#SBATCH --gres=gpu:2             # number of allocated gpus per node
+#SBATCH --mem=32G                # total memory per node (4 GB per cpu-core is default)
+#SBATCH --gres=gpu:1             # number of allocated gpus per node
 #SBATCH --cpus-per-task=8        # Number of CPUs per process
 # Copied from slurm_queue.sh from the s4 repo
 

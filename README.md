@@ -1,8 +1,8 @@
 # Installation instruction for Iridis
 Create and actiavte a conda environment:
 ```bash
-conda create -n mamba2 python=3.10
-conda activate mamba2
+conda create -n mamba python=3.10
+conda activate mamba
 ```
 
 Load in modules cuda 12.8 and gcc 11.5:

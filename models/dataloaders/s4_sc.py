@@ -511,7 +511,9 @@ class _SpeechCommands(torch.utils.data.TensorDataset):
         else:
             raise NotImplementedError("the set {} is not implemented.".format(set))
 
-        return X.transpose(1, 2), y
+        X = X.transpose(1, 2)
+        X = X[..., :1]
+        return X, y
 
 class _SpeechCommandsGeneration(_SpeechCommands):
     SUBSET_CLASSES = [

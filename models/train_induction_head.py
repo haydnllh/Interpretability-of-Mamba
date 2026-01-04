@@ -11,7 +11,7 @@ import logging
 Recreate Experiment in Table 2, Section 4.1.2 and Appendix E1 
 """
 
-def main(n_epoch=1000, epoch_sz=8192,
+def train_induction_head(n_epoch=1000, epoch_sz=8192,
          report_every=100, out_file='model.ckpt'):
     
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
@@ -60,4 +60,4 @@ def main(n_epoch=1000, epoch_sz=8192,
     # finished training
 
 if __name__ == '__main__':
-    fire.Fire(main(out_file="checkpoints/induction_heads"))
+    fire.Fire(train_induction_head(out_file="checkpoints/induction_heads"))

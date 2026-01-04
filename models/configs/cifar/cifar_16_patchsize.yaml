@@ -1,8 +1,8 @@
 mamba:
     ssm_type: "S6-Real"
-    n_layers: 1
+    n_layers: 3
     d_model: 128
-    d_state: 16
+    d_state: 32
     d_conv: 4
     expand_factor: 2
     bidirectional: False
@@ -23,6 +23,6 @@ model:
 
 train:
   batch_size: 50
-  lr: 1e-5
+  lr: 1e-4
   weight_decay: 1e-5
-  epochs: 2000
+  epochs: 100
