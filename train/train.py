@@ -63,6 +63,19 @@ class MambaClassifierTrainer(L.LightningModule):
         self.log("val_loss", loss, prog_bar=True)
         self.log("val_acc", acc, prog_bar=True)
         
+    def test_step(self, batch, batch_idx):
+        x, y = batch
+        y = y.long()
+
+        logits = self.forward(x)
+        loss = self.loss_fn(logits, y)
+        
+        preds = logits.argmax(dim=1)
+        acc = (preds == y).float().mean()
+
+        self.log("test_loss", loss, prog_bar=True)
+        self.log("test_acc", acc, prog_bar=True)
+        
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.lr)
     
@@ -80,19 +93,19 @@ def main():
             cfg = OmegaConf.load(args.config)
         else:
             cfg = OmegaConf.load("models/configs/mnist/mnist.yaml")
-        train_loader, test_loader = get_mnist(batch_size=cfg.train.batch_size)
+        train_loader, val_loader = get_mnist(batch_size=cfg.train.batch_size)
     elif args.dataset == "cifar":
         if args.config is not None:
             cfg = OmegaConf.load(args.config)
         else:
             cfg = OmegaConf.load("models/configs/cifar/cifar_4_patchsize.yaml")
-        train_loader, test_loader = get_cifar(batch_size=cfg.train.batch_size)
+        train_loader, val_loader = get_cifar(batch_size=cfg.train.batch_size)
     elif args.dataset == "sc":
         if args.config is not None:
             cfg = OmegaConf.load(args.config)
         else:
             cfg = OmegaConf.load("models/configs/sc/sc.yaml")
-        train_loader, test_loader = get_sc(batch_size=cfg.train.batch_size)
+        train_loader, val_loader, test_loader = get_sc(batch_size=cfg.train.batch_size)
         
     elif args.dataset == "selective_copying":
         train(f'{args.checkpoint_path}')
@@ -105,7 +118,7 @@ def main():
     checkpoint_callback = ModelCheckpoint(
         dirpath=f"/scratch/lhl1g23/checkpoints/{timestamp if args.checkpoint_path is None else args.checkpoint_path}",
         filename="best",
-        save_top_k=1,
+        save_top_k=-1,
         save_last=True,
         monitor="val_acc"
     )
@@ -128,10 +141,12 @@ def main():
         devices=1 if torch.cuda.is_available() else None,
         callbacks=[checkpoint_callback, RichProgressBar()],
         enable_progress_bar=True,
-        logger=[logger_tb]
+        logger=[logger_tb],
+        deterministic=True
     )
     
-    trainer.fit(model, train_loader, test_loader)
+    trainer.fit(model, train_loader, val_loader)
+    trainer.test(model, dataloaders=test_loader)
 
     
 if __name__ == "__main__":

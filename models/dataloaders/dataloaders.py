@@ -42,32 +42,45 @@ def get_cifar(batch_size=32):
     return DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=64), \
         DataLoader(test_data, batch_size=batch_size, num_workers=64)
     
-def get_sc(batch_size=32, n_mels=128, is_mel=False):
-    dataset = _SpeechCommands(
+def get_sc(batch_size=32):
+    train_data = _SpeechCommands(
         partition='train',
         length=16000,
         mfcc=False,
         sr=1,
-        dropped_rate=0.01,
+        dropped_rate=0,
         path='/scratch/lhl1g23/mamba/data/sc/train',
         all_classes=False,
         gen=False,
         discrete_input=False,
     )
     
-    train_data, test_data = torch.utils.data.random_split(dataset, [0.8, 0.2])
-    """ test_data = _SpeechCommands(
+    val_data = _SpeechCommands(
+        partition='val',
+        length=16000,
+        mfcc=False,
+        sr=1,
+        dropped_rate=0,
+        path='/scratch/lhl1g23/mamba/data/sc/train',
+        all_classes=False,
+        gen=False,
+        discrete_input=False
+    ) 
+
+    
+    test_data = _SpeechCommands(
         partition='test',
         length=16000,
         mfcc=False,
         sr=1,
-        dropped_rate=0.01,
-        path='/scratch/lhl1g23/mamba/data/sc/test',
+        dropped_rate=0,
+        path='/scratch/lhl1g23/mamba/data/sc/train',
         all_classes=False,
         gen=False,
         discrete_input=False
-    )  """
+    ) 
 
     return DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=4), \
-       DataLoader(test_data, batch_size=batch_size, shuffle=True, num_workers=4)
+        DataLoader(val_data, batch_size=batch_size, shuffle=False, num_workers=4), \
+        DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=4)
     

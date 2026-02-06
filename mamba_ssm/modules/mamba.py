@@ -708,8 +708,7 @@ class MambaBlock(nn.Module):
             if self.config.dt_is_selective:
                 dt_proj = self.dt_proj.weight @ dt_raw.transpose(1, 2)
                 dt = dt_proj.transpose(1, 2)
-                if not self.config.use_cuda:
-                    dt = F.softplus(dt + self.dt_proj.bias)
+                dt = F.softplus(dt + self.dt_proj.bias)
             else:
                 dt_new = torch.exp(self.inv_dt)
                 dt = torch.zeros_like(x[..., :1].expand(-1, -1, A.shape[0])) + dt_new

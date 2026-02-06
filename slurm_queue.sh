@@ -23,7 +23,7 @@ fi
 
 # Do normal work here:
 cd $HOME/ssm/mamba
-module load cuda/12.8.0
+module load cuda/13.1.0
 module load gcc/11.5.0
 
 # Activate conda env:

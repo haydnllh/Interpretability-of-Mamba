@@ -15,7 +15,7 @@ import torch
 import torch.nn.functional as F
 import torchaudio
 import soundfile as sf
-
+from tqdm import tqdm
 
 def pad(channel, maxlen):
     channel = torch.tensor(channel)
@@ -269,9 +269,18 @@ class _SpeechCommands(torch.utils.data.TensorDataset):
             os.mkdir(root)
         if not os.path.exists(base_loc):
             os.mkdir(base_loc)
-        urllib.request.urlretrieve(
-            "http://download.tensorflow.org/data/speech_commands_v0.02.tar.gz", loc
-        )  # TODO: Add progress bar
+        
+        url = "http://download.tensorflow.org/data/speech_commands_v0.02.tar.gz"
+
+        with tqdm(unit="B", unit_scale=True, unit_divisor=1024, desc="Downloading Speech Commands") as pbar:
+            def reporthook(block_num, block_size, total_size):
+                if pbar.total is None and total_size:
+                    pbar.total = total_size
+                downloaded = block_num * block_size
+                pbar.update(downloaded - pbar.n)
+
+            urllib.request.urlretrieve(url, loc, reporthook)
+        
         with tarfile.open(loc, "r") as f:
             def is_within_directory(directory, target):
                 
@@ -309,10 +318,10 @@ class _SpeechCommands(torch.utils.data.TensorDataset):
 
         batch_index = 0
         y_index = 0
-        for foldername in self.ALL_CLASSES:
+        for foldername in tqdm(self.ALL_CLASSES):
             print(foldername)
             loc = base_loc / foldername
-            for filename in os.listdir(loc):
+            for filename in sorted(os.listdir(loc)):
                 audio, _ = sf.read(
                     loc / filename,
                 )
@@ -400,9 +409,9 @@ class _SpeechCommands(torch.utils.data.TensorDataset):
 
         batch_index = 0
         y_index = 0
-        for foldername in self.SUBSET_CLASSES:
+        for foldername in tqdm(self.SUBSET_CLASSES):
             loc = base_loc / foldername
-            for filename in os.listdir(loc):
+            for filename in sorted(os.listdir(loc)):
                 audio, _ = sf.read(
                     loc / filename,
                 )
