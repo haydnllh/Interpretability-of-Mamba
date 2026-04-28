@@ -1,0 +1,30 @@
+mamba:
+    ssm_type: "S6-Complex"
+    n_layers: 3
+    d_model: 64
+    d_state: 32
+    d_conv: 4
+    expand_factor: 2
+    bidirectional: False
+    dt_is_selective: True
+    B_is_selective: True
+    C_is_selective: True
+    param_A_imag: "normal"
+    deterministic: False
+    pscan: False
+    initA_imag: "S4"
+    initA_real: "S4"
+    channel_sharing: True
+    dt_rank: 'auto'
+    use_cuda: True
+    conj_sym: True
+
+model:
+  num_classes: 10
+  n_input: 1
+
+train:
+  batch_size: 16
+  lr: 0.001
+  epochs: 20
+  is_mel: False

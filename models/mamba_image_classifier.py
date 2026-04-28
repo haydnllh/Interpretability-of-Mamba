@@ -35,8 +35,8 @@ class MambaImageClassifier(nn.Module):
         logits = self.classifier(x)
         return logits
     
-    def get_params(self, x):
+    def get_params(self, x, requires_grad=False):
         x = self.rearrange(x)
         x = self.embed(x)
         
-        return self.mamba.get_params(x)
+        return self.mamba.get_params(x, requires_grad=requires_grad)

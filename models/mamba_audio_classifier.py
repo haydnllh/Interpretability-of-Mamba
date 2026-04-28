@@ -34,9 +34,9 @@ class MambaAudioClassifier(nn.Module):
         x = self.mamba(x)
             
         logits = self.classifier(x.mean(1))
-        return logits
+        return x, logits
     
-    def get_params(self, x):
+    def get_params(self, x, requires_grad=False):
         x = self.embed(x)
         
-        return self.mamba.get_params(x)
+        return self.mamba.get_params(x, requires_grad=requires_grad)

@@ -42,6 +42,7 @@ class MambaConfig:
     channel_sharing: bool = True
     dt_rank: Union[int, str] = 'auto'
     A_imag_using_weight_decay: str = True
+    conj_sym: bool = True
 
     dt_min: float = 0.001
     dt_max: float = 0.1
@@ -59,7 +60,7 @@ class MambaConfig:
         if self.dt_rank == 'auto':
             self.dt_rank = math.ceil(self.d_model / 16)
 
-        if self.ssm_type == "S6-Complex":
+        if self.ssm_type == "S6-Complex" and self.conj_sym:
             self.d_state = self.d_state // 2  # apples to apples comparison with S6-Real w.r.t number of parameters
 
         if "S4" in self.ssm_type:
@@ -106,10 +107,12 @@ class Mamba(nn.Module):
 
         return x, caches
     
-    def get_params(self, x):
+    def get_params(self, x, requires_grad):
         for block in self.layers:
-            yield block.get_params(x)
+            params =  block.get_params(x, requires_grad)
             x = block(x)
+            params.update({'y_out': x})
+            yield params
 
 
 class ResidualBlock(nn.Module):
@@ -142,8 +145,8 @@ class ResidualBlock(nn.Module):
         output = output + x
         return output, cache
     
-    def get_params(self, x):
-        return self.mixer.get_params(x)
+    def get_params(self, x, requires_grad):
+        return self.mixer.get_params(self.norm(x), requires_grad)
 
 
 class MambaBlock(nn.Module):
@@ -606,18 +609,148 @@ class MambaBlock(nn.Module):
         else:
             y = (hs @ C.unsqueeze(-1)).squeeze(3)  #  (B, L, ED, N) @ (B, L, N, 1) -> (B, L, ED, 1)
 
-        if (self.config.ssm_type == "S6-Real-complex-bias") or (self.config.ssm_type =="S6-Complex"):
+        if ((self.config.ssm_type == "S6-Real-complex-bias") or (self.config.ssm_type =="S6-Complex")) and self.config.conj_sym:
             y = y * 2
 
         y = y + D.unsqueeze(0).unsqueeze(0) * x
 
         return y.real
     
-    def get_params(self, x, z=None):
+    
+    def step(self, x, cache):
+        # x     : (B, D)
+        # cache : (h, conv_inputs)
+        #   h          : (B, ED, N)  – SSM hidden state
+        #   conv_inputs: (B, ED, d_conv-1)  – rolling conv buffer
+
+        h, conv_inputs = cache
+
+        xz = self.in_proj(x)                      # (B, 2*ED)
+        x_branch, z = xz.chunk(2, dim=-1)         # (B, ED) each
+
+        # ── Depthwise conv (sliding-window update) ──────────────────────────
+        # Append new token, drop oldest
+        x_conv = torch.cat(
+            [conv_inputs, x_branch.unsqueeze(2)], dim=2
+        )                                          # (B, ED, d_conv)
+        conv_inputs_new = x_conv[:, :, 1:]        # (B, ED, d_conv-1)  → next cache
+
+        # Conv weight: (ED, 1, d_conv)  →  apply as dot-product over the window
+        x_branch = (
+            x_conv * self.conv1d.weight[:, 0, :]  # (B, ED, d_conv)
+        ).sum(dim=2)
+        if self.conv1d.bias is not None:
+            x_branch = x_branch + self.conv1d.bias
+        x_branch = F.silu(x_branch)              # (B, ED)
+
+        # ── SSM step ────────────────────────────────────────────────────────
+        if self.config.ssm_type == "S6-Real":
+            A = -torch.exp(self.A_log.float())   # (ED, N)
+            D = self.D                           # (ED,)
+
+            # Δ
+            delta_raw = self.x_proj_dt(x_branch)  # (B, dt_rank)
+            if self.config.dt_is_selective:
+                delta = F.softplus(
+                    (self.dt_proj.weight @ delta_raw.t()).t()
+                    + self.dt_proj.bias
+                )                                # (B, ED)
+            else:
+                delta = torch.exp(self.inv_dt).expand(x_branch.size(0), -1)
+
+            # B, C
+            B = self.x_proj_B(x_branch)         # (B, N)
+            C = self.x_proj_C(x_branch)         # (B, N)
+
+            # Discretise
+            # dA : (B, ED, N)
+            dA = torch.exp(delta.unsqueeze(-1) * A.unsqueeze(0))
+            # dB : (B, ED, N)
+            if self.config.discretizationB == "s6":
+                dB = delta.unsqueeze(-1) * B.unsqueeze(1)
+            elif self.config.discretizationB == "zoh":
+                dB = B.unsqueeze(1) * (dA - 1.0) / A.unsqueeze(0)
+            else:
+                raise NotImplementedError
+
+            # State update  h : (B, ED, N)
+            h_new = dA * h + dB * x_branch.unsqueeze(-1)
+
+            # Output
+            y = (h_new * C.unsqueeze(1)).sum(dim=-1)   # (B, ED)
+            y = y + D * x_branch
+
+        elif self.config.ssm_type == "S6-Complex":
+            A = -torch.exp(self.log_A_real) + 1j * self.A_imag  # (ED, N)
+            D = self.D                                           # (ED,)
+
+            # Δ
+            delta_raw = self.x_proj_dt(x_branch)
+            if self.config.dt_is_selective:
+                delta = F.softplus(
+                    (self.dt_proj.weight @ delta_raw.t()).t()
+                    + self.dt_proj.bias
+                )
+            else:
+                delta = torch.exp(self.inv_dt).expand(x_branch.size(0), -1)
+
+            # B, C  (complex)
+            B = (self.x_proj_real_B(x_branch)
+                + 1j * self.x_proj_imag_B(x_branch))   # (B, N)
+            C = (self.x_proj_real_C(x_branch)
+                - 1j * self.x_proj_imag_C(x_branch))   # (B, N)
+
+            # Discretise
+            if self.config.discretizationA == "normal":
+                dA = torch.exp(delta.unsqueeze(-1) * A.unsqueeze(0))
+            elif self.config.discretizationA == "yuval_disc":
+                dA = torch.exp(
+                    delta.unsqueeze(-1) * A.real.unsqueeze(0)
+                    + 1j * A.imag.unsqueeze(0)
+                )
+            else:
+                raise NotImplementedError
+
+            if self.config.discretizationB == "s6":
+                dB = delta.unsqueeze(-1) * B.unsqueeze(1)
+            elif self.config.discretizationB == "zoh":
+                dB = B.unsqueeze(1) * (dA - 1.0) / A.unsqueeze(0)
+            else:
+                raise NotImplementedError
+
+            # State update (complex)
+            h_new = dA * h + dB * x_branch.unsqueeze(-1).to(torch.cfloat)
+
+            # Output
+            y = (h_new * C.unsqueeze(1)).sum(dim=-1)   # (B, ED) complex
+            if self.config.conj_sym:
+                y = y * 2
+            y = y.real + D * x_branch
+
+        else:
+            raise NotImplementedError(
+                f"step() not implemented for ssm_type={self.config.ssm_type}"
+            )
+
+        # ── Gating + output projection ───────────────────────────────────────
+        y = y * F.silu(z)                        # (B, ED)
+        output = self.out_proj(y)                # (B, D)
+
+        cache_new = (h_new, conv_inputs_new)
+        return output, cache_new
+
+    
+    def get_params(self, x, requires_grad, z=None):
         params = {}
+        torch.set_grad_enabled(requires_grad)
         
+        _, L, _ = x.shape
         xz = self.in_proj(x)
         x, z = xz.chunk(2, dim=-1)
+        x = x.transpose(1, 2)
+        x = self.conv1d(x)[:, :, :L]
+        x = x.transpose(1, 2)
+        x = F.silu(x)
         
         if self.config.ssm_type == "S6-Real":
             # Base parameters
@@ -637,6 +770,8 @@ class MambaBlock(nn.Module):
             else:
                 dt_new = torch.exp(self.inv_dt)
                 dt = torch.zeros_like(x[..., :1].expand(-1, -1, A.shape[0])) + dt_new
+            
+            if requires_grad: dt.retain_grad()
             
             # Discretize A
             if self.config.discretizationA == "normal":
@@ -678,6 +813,9 @@ class MambaBlock(nn.Module):
                 C = C_raw.unsqueeze(-1)  # (B, L, N, 1)
                 y_ssm = (states @ C).squeeze(3)  # (B, L, ED)
             
+            y_ssm = y_ssm + D.unsqueeze(0).unsqueeze(0) * x
+                
+            
             # Store parameters
             params['A'] = A
             params['B'] = B_raw
@@ -712,6 +850,8 @@ class MambaBlock(nn.Module):
             else:
                 dt_new = torch.exp(self.inv_dt)
                 dt = torch.zeros_like(x[..., :1].expand(-1, -1, A.shape[0])) + dt_new
+
+            if requires_grad: dt.retain_grad()
             
             # Discretize A
             if self.config.discretizationA == "normal":
@@ -754,8 +894,10 @@ class MambaBlock(nn.Module):
                 y_ssm = (states @ C).squeeze(3)  # (B, L, ED)
             
             # Apply complex scaling if needed
-            if self.config.ssm_type == "S6-Complex":
+            if self.config.ssm_type == "S6-Complex" and self.config.conj_sym:
                 y_ssm = y_ssm * 2
+                
+            y_ssm = (y_ssm + D.unsqueeze(0).unsqueeze(0) * x).real
             
             # Store parameters
             params['A'] = A
@@ -771,7 +913,7 @@ class MambaBlock(nn.Module):
         else:
             raise NotImplementedError(f"get_params not implemented for ssm_type: {self.config.ssm_type}")
         
-        params = {k: v.to('cpu') for k, v in params.items()}
+        #params = {k: v.to('cpu') for k, v in params.items()}
         
         return params
 

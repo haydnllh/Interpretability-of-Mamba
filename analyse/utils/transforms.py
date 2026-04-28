@@ -3,7 +3,7 @@ import numpy as np
 
 def frequency_response_one_step(dA, dB, C, t):
     frequencies = torch.arange(360) * (2 * torch.pi / 360)
-    z = torch.exp(1j * frequencies).unsqueeze(0)
+    z = torch.exp(1j * frequencies).unsqueeze(0).to(dA.device)
 
     dA = dA.unsqueeze(-1)
     dB = dB.unsqueeze(-1)
@@ -17,11 +17,11 @@ def z_transform_one_step(dA, dB, C, t):
     real = np.linspace(-1.18, 1.2, nx)
     imag = np.linspace(1.18, -1.2, ny)
     xv, xy = np.meshgrid(real, imag)
-    z = torch.tensor(xv + 1j * xy)
-    dA_t = dA.unsqueeze(-1).unsqueeze(-1)
-    dB_t = dB.unsqueeze(-1).unsqueeze(-1)
-    C_t  = C.unsqueeze(2).unsqueeze(-1).unsqueeze(-1)
+    z = torch.tensor(xv + 1j * xy).to(dA.device) # (nx, ny)
+    dA_t = dA.unsqueeze(-1).unsqueeze(-1) # (B,L,D,N,1,1)
+    dB_t = dB.unsqueeze(-1).unsqueeze(-1) # (B,L,D,N,1,1)
+    C_t  = C.unsqueeze(2).unsqueeze(-1).unsqueeze(-1) # (B,L,1,N,1,1)
     t = 0
 
-    H = (C_t[:,t] / (z - dA_t[:,t]) * dB_t[:,t]).sum(dim=2)
+    H = (C_t[:,t] / (z - dA_t[:,t]) * dB_t[:,t]).sum(dim=2) # (B,D,nx,ny)
     return H

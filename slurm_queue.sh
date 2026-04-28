@@ -18,7 +18,7 @@ echo "MASTER_ADDR="$MASTER_ADDR
 opts=( $OPTS ) # Get all python arguments
 
 if [ -z $PYFUNC ]; then
-  PYFUNC=train.train
+  PYFUNC=train.train_classifier
 fi
 
 # Do normal work here:
@@ -27,8 +27,15 @@ module load cuda/13.1.0
 module load gcc/11.5.0
 
 # Activate conda env:
+#ENV_NAME="mamba"
+#source activate $ENV_NAME
+
 ENV_NAME="mamba"
-source activate $ENV_NAME
+source ~/.bashrc
+conda activate $ENV_NAME
+
+echo "Python path: $(which python)"
+python --version
 
 # Log input arguments
 echo "Input arguments: "${opts[@]}
@@ -53,4 +60,4 @@ echo '==================================='
 
 # Call training script with optional arguments (defaults specified in train script):
 # python $PYFUNC "${opts[@]}"
-srun python -m $PYFUNC "${opts[@]}"
+srun $(which python) -m $PYFUNC "${opts[@]}"

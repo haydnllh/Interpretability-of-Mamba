@@ -7,6 +7,7 @@ import soundfile as sf
 import os
 from models.dataloaders.induction_heads import InductionData
 from models.dataloaders.s4_sc import _SpeechCommands
+from models.dataloaders.wikitext import get_dataloaders
 from einops import rearrange
 
 def get_mnist(batch_size=32):
@@ -84,3 +85,10 @@ def get_sc(batch_size=32):
         DataLoader(val_data, batch_size=batch_size, shuffle=False, num_workers=4), \
         DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=4)
     
+def get_wikitext(
+    dataset_name="wikitext-103-raw-v1",
+    tokenizer="gpt2", 
+    batch_size=32, 
+    block_size=256
+):
+    return get_dataloaders(dataset_name=dataset_name, tokenizer=tokenizer, batch_size=batch_size, block_size=block_size)

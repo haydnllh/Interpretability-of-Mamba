@@ -1,5 +1,5 @@
 mamba:
-    ssm_type: "S6-Real"
+    ssm_type: "S6-Complex"
     n_layers: 3
     d_model: 128
     d_state: 32
@@ -22,7 +22,7 @@ model:
   num_classes: 10
 
 train:
-  batch_size: 50
+  batch_size: 32
   lr: 1e-4
-  weight_decay: 1e-5
-  epochs: 100
+  weight_decay: 0.1
+  epochs: 20
