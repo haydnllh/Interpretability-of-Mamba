@@ -1,4 +1,4 @@
-**Full MSc Dissertation:** [Read the PDF](./dissertation.pdf)
+**Full Dissertation:** [Read the PDF](./Report.pdf)
 
 # Installation instruction for Iridis
 Create and actiavte a conda environment:
