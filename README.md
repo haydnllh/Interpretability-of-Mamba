@@ -1,3 +1,5 @@
+**Full MSc Dissertation:** [Read the PDF](./dissertation.pdf)
+
 # Installation instruction for Iridis
 Create and actiavte a conda environment:
 ```bash
